@@ -1,0 +1,5 @@
+/.cache/
+/build/
+/qt/
+/squashfs-root/
+/aqtinstall.log

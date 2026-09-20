@@ -1,0 +1,4 @@
+{
+    global: _ZN11QFileDialog*;
+    local: *;
+};
