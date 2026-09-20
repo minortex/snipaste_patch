@@ -13,6 +13,7 @@
 #include <QPointer>
 #include <QRegularExpression>
 #include <QScopedValueRollback>
+#include <QScreen>
 #include <QUrl>
 #include <QUuid>
 #include <QWindow>
@@ -71,11 +72,13 @@ struct Choice {
     QString filter;
 };
 
-class SuspendedWindows final {
+class PortalWindowGuard final {
     struct Window {
         QPointer<QWidget> widget;
         QPointer<QWindow> native;
         bool enabled;
+        bool hiddenOverlay;
+        bool wasOnTop;
     };
     QList<Window> windows;
     QPointer<QWidget> active = QApplication::activeWindow();
@@ -83,35 +86,65 @@ class SuspendedWindows final {
     QPointer<QWidget> keyboardGrabber = QWidget::keyboardGrabber();
     bool quitting = false;
     QObject connections;
+    QPointer<QWidget> parentWindow;
 public:
-    SuspendedWindows()
+    explicit PortalWindowGuard(QWidget *parent)
     {
         QObject::connect(qApp, &QCoreApplication::aboutToQuit, &connections,
                          [this] { quitting = true; });
-        // Capture all windows first: the screenshot overlay need not be the parent.
+        parentWindow = parent ? parent->window() : active.data();
+        while (parentWindow && (parentWindow->windowType() == Qt::Popup
+                               || parentWindow->windowType() == Qt::ToolTip)) {
+            parentWindow = parentWindow->parentWidget()
+                ? parentWindow->parentWidget()->window() : nullptr;
+        }
+        // Only fullscreen capture surfaces need hiding; a pin must stay mapped.
         for (QWidget *widget : QApplication::topLevelWidgets()) {
             auto *native = widget->windowHandle();
-            if (widget->isVisible() && native && native->isVisible())
-                windows.append({widget, native, widget->isEnabled()});
+            if (!widget->isVisible() || !native || !native->isVisible()) continue;
+            if (widget->windowType() == Qt::Popup || widget->windowType() == Qt::ToolTip)
+                continue;
+            const bool fullscreen = native->windowStates().testFlag(Qt::WindowFullScreen);
+            const bool bypassScreen = native->flags().testFlag(Qt::BypassWindowManagerHint)
+                && native->screen() && native->geometry().contains(native->screen()->geometry());
+            const bool overlay = fullscreen || bypassScreen;
+            windows.append({widget, native, widget->isEnabled(), overlay,
+                            native->flags().testFlag(Qt::WindowStaysOnTopHint)});
+            if (!parentWindow && !overlay) parentWindow = widget;
         }
         if (mouseGrabber) mouseGrabber->releaseMouse();
         if (keyboardGrabber) keyboardGrabber->releaseKeyboard();
         for (const auto &window : windows) {
             if (window.widget && window.enabled) window.widget->setEnabled(false);
-            // Hide the native surface without explicitly hiding/resetting the QWidget.
-            if (window.native) window.native->hide();
+            if (!window.native) continue;
+            if (window.hiddenOverlay) window.native->hide();
+            // QWindow flags update X11 properties in place. QWidget::setWindowFlags
+            // would hide/recreate the widget and can terminate a pin's lifecycle.
+            else if (window.wasOnTop) window.native->setFlag(Qt::WindowStaysOnTopHint, false);
         }
         QGuiApplication::sync();
     }
 
-    ~SuspendedWindows()
+    QString parentId() const
+    {
+        if (QGuiApplication::platformName() != QStringLiteral("xcb") || !parentWindow)
+            return {};
+        const auto *native = parentWindow->windowHandle();
+        if (!native || !native->isVisible()) return {};
+        return QStringLiteral("x11:") + QString::number(parentWindow->winId(), 16);
+    }
+
+    ~PortalWindowGuard()
     {
         for (const auto &window : windows) {
             if (!window.widget) continue;
             if (window.enabled) window.widget->setEnabled(true);
             // Do not resurrect windows closed by application callbacks while waiting.
-            if (!quitting && window.widget && window.widget->isVisible() && window.native)
-                window.native->show();
+            if (!quitting && window.widget && window.widget->isVisible() && window.native) {
+                if (window.hiddenOverlay) window.native->show();
+                else if (window.wasOnTop)
+                    window.native->setFlag(Qt::WindowStaysOnTopHint, true);
+            }
         }
         if (!quitting && active && active->isVisible()) active->activateWindow();
         if (!quitting && mouseGrabber && mouseGrabber->isVisible()
@@ -204,9 +237,8 @@ static Choice choose(QWidget *parent, const QString &caption, const QString &ini
     }
 
     QPointer<QWidget> window = parent ? parent->window() : nullptr;
-    SuspendedWindows suspendedWindows;
-    // A transient parent that is hidden can also hide its portal dialog on some WMs.
-    const QString parentId;
+    PortalWindowGuard windowGuard(parent);
+    const QString parentId = windowGuard.parentId();
     auto message = QDBusMessage::createMethodCall(service,
         QStringLiteral("/org/freedesktop/portal/desktop"),
         QStringLiteral("org.freedesktop.portal.FileChooser"),
