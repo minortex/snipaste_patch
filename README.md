@@ -16,6 +16,8 @@
 例如 KDE 或 GTK 后端。实际窗口由当前 portal 后端决定。
 已有实例不会被启动脚本注入，必须退出后重新启动。
 
+如果要直接修改当前安装的版本，直接改`/usr/bin/Snipaste`，在 exec 前加`export LD_PRELOAD="/opt/snipaste/lib/libsnipaste-portal.so${LD_PRELOAD:+:$LD_PRELOAD}"`，然后把 so 拷进去。
+
 ## 编译
 
 ```sh
