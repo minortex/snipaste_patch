@@ -38,6 +38,7 @@
 - X11/XWayland 下传递可见父窗口标识，使 portal 覆盖在贴图上。隐藏的截图父窗口及原生 Wayland 使用无父窗口请求。
 - 保存流程由 portal 处理覆盖确认；`DontUseNativeDialog` 不会阻止替换。其他 Qt 专属选项没有逐项映射。
 - 仅拦截当前二进制实际引用的三个静态 QFileDialog 接口，不替换任意自定义 QDialog。
+- 加载后会从自身的 `LD_PRELOAD` 环境中移除本库，避免 Snipaste 启动的 `wlhelper`（Wayland 剪贴板服务）继承该注入。
 
 ## 手动验证
 

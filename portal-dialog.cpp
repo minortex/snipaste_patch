@@ -18,7 +18,42 @@
 #include <QUuid>
 #include <QWindow>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <dlfcn.h>
+#include <string>
+
+// LD_PRELOAD is inherited by child processes. Snipaste launches its Wayland
+// clipboard helper (wlhelper), which must not receive this QFileDialog hook or
+// its QtWidgets dependency. Remove only this library from the environment as
+// soon as the hook has been loaded; the main process keeps the hook in memory.
+__attribute__((constructor)) static void removeSelfFromPreload()
+{
+    const char *value = std::getenv("LD_PRELOAD");
+    if (!value || !*value) return;
+
+    static constexpr char self[] = "libsnipaste-portal.so";
+    std::string remaining;
+    const char *cursor = value;
+    while (*cursor) {
+        while (*cursor == ':' || *cursor == ' ' || *cursor == '\t') ++cursor;
+        if (!*cursor) break;
+        const char *end = cursor;
+        while (*end && *end != ':' && *end != ' ' && *end != '\t') ++end;
+        const std::size_t length = static_cast<std::size_t>(end - cursor);
+        const bool isSelf = length >= sizeof(self) - 1
+            && std::memcmp(cursor + length - (sizeof(self) - 1), self,
+                           sizeof(self) - 1) == 0;
+        if (!isSelf) {
+            if (!remaining.empty()) remaining.push_back(':');
+            remaining.append(cursor, length);
+        }
+        cursor = end;
+    }
+
+    if (remaining.empty()) ::unsetenv("LD_PRELOAD");
+    else ::setenv("LD_PRELOAD", remaining.c_str(), 1);
+}
 
 struct Pattern { uint kind; QString value; };
 using Patterns = QList<Pattern>;
