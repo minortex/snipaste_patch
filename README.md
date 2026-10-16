@@ -18,6 +18,28 @@
 
 如果要直接修改当前安装的版本，直接改`/usr/bin/Snipaste`，在 exec 前加`export LD_PRELOAD="/opt/snipaste/lib/libsnipaste-portal.so${LD_PRELOAD:+:$LD_PRELOAD}"`，然后把 so 拷进去。
 
+### 安装到系统（推荐）
+
+Snipaste 每次启动都会用自带模板重写 `~/.local/share/applications/_snipaste.desktop`
+和 `~/.config/autostart/_snipaste.desktop`，但其中的 `Exec` 始终指向
+`/opt/snipaste/bin/Snipaste`。所以真正稳定的劫持点是这个二进制本身，
+而不是桌面文件（对桌面文件 `chattr +i` 会让 Snipaste 因写入失败而无法启动）。
+
+```sh
+./build.sh
+sudo ./install-hijack.sh
+```
+
+脚本会：
+
+- 把真实二进制改名为 `/opt/snipaste/bin/Snipaste.real`；
+- 把编译好的 `libsnipaste-portal.so` 安装到 `/opt/snipaste/lib/`；
+- 在 `/opt/snipaste/bin/Snipaste` 写入设置 `LD_PRELOAD` 的 wrapper；
+- 把 `/usr/bin/Snipaste` 改为转发到该 wrapper。
+
+无论 Snipaste 之后怎么重写桌面文件，`Exec` 都会命中 wrapper。脚本幂等，
+可用 `SNIPASTE_PREFIX` 指定其他安装前缀。
+
 ## 编译
 
 ```sh
