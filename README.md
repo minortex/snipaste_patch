@@ -16,14 +16,14 @@
 例如 KDE 或 GTK 后端。实际窗口由当前 portal 后端决定。
 已有实例不会被启动脚本注入，必须退出后重新启动。
 
-如果要直接修改当前安装的版本，直接改`/usr/bin/Snipaste`，在 exec 前加`export LD_PRELOAD="/opt/snipaste/lib/libsnipaste-portal.so${LD_PRELOAD:+:$LD_PRELOAD}"`，然后把 so 拷进去。
-
 ### 安装到系统（推荐）
 
-Snipaste 每次启动都会用自带模板重写 `~/.local/share/applications/_snipaste.desktop`
-和 `~/.config/autostart/_snipaste.desktop`，但其中的 `Exec` 始终指向
-`/opt/snipaste/bin/Snipaste`。所以真正稳定的劫持点是这个二进制本身，
-而不是桌面文件（对桌面文件 `chattr +i` 会让 Snipaste 因写入失败而无法启动）。
+Snipaste 每次启动都会把实际运行 ELF 的路径写回
+`~/.local/share/applications/_snipaste.desktop` 和自启动文件。只改桌面文件或
+外层 wrapper 都会被绕过。稳定做法是直接给原始 ELF
+`/opt/snipaste/bin/Snipaste` 增加对 portal 库的 `DT_NEEDED` 依赖，
+使动态加载器在程序入口前载入钩子，不保留 ELF 副本。
+不要锁定桌面文件，写入失败会导致 Snipaste 无法启动。
 
 ```sh
 ./build.sh
@@ -32,13 +32,11 @@ sudo ./install-hijack.sh
 
 脚本会：
 
-- 把真实二进制改名为 `/opt/snipaste/bin/Snipaste.real`；
 - 把编译好的 `libsnipaste-portal.so` 安装到 `/opt/snipaste/lib/`；
-- 在 `/opt/snipaste/bin/Snipaste` 写入设置 `LD_PRELOAD` 的 wrapper；
-- 把 `/usr/bin/Snipaste` 改为转发到该 wrapper。
+- 通过 `patchelf --add-needed` 把依赖直接写入 `/opt/snipaste/bin/Snipaste`；
 
-无论 Snipaste 之后怎么重写桌面文件，`Exec` 都会命中 wrapper。脚本幂等，
-可用 `SNIPASTE_PREFIX` 指定其他安装前缀。
+无论 Snipaste 之后怎么写 `Exec`，动态加载器都会加载钩子。
+脚本幂等，可用 `SNIPASTE_PREFIX` 指定其他安装前缀。
 
 ## 编译
 
